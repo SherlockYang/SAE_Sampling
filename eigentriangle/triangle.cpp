@@ -53,11 +53,11 @@ int     PrintVector(vector<double> A)
     return 0;
 }
 
-int     ForceTriangle(Matrix* A)
+double  ForceTriangle(Matrix* A)
 {
     time_t startTime;
     startTime = clock();
-    int res = 0;
+    double res = 0;
     int n = A -> GetRowNum();
     for (int i = 0; i < n; i ++)
     {
@@ -74,7 +74,8 @@ int     ForceTriangle(Matrix* A)
 }
 
 // Lanczos method to calculate eigen values
-double      EigenTriangle(Matrix* A, int m)
+// partial reorthogonalization 
+double      PartialEigenTriangle(Matrix* A, int m)
 {
     time_t startTime = clock();
     srand(time(0));
@@ -82,6 +83,11 @@ double      EigenTriangle(Matrix* A, int m)
     double** v = new double*[m];
     for (int i = 0; i < m; i ++)
         v[i] = new double[n];
+    double na = 0.0;
+    for (int i = 0; i < n; i ++)
+        for (int j = 0; j < n; j ++)
+            na += A -> Get(i, j);
+
     double s = 0;
     // generate the first Lanczos vector randomly
     for (int i = 0; i < n; i ++)
@@ -98,7 +104,6 @@ double      EigenTriangle(Matrix* A, int m)
     double* alpha = new double[n];
     double* beta = new double[n + 1];
     beta[0] = 0;
-    int iter = 0;
     for (int i = 0; i < m; i ++)
     {
         /*
@@ -149,7 +154,7 @@ double      EigenTriangle(Matrix* A, int m)
             v[i + 1][j] = w[j] / beta[i + 1];
         }
         
-        // recover orthogonality basis
+        // reorthogonalization
         for (int j = 0; j < i; j ++)
         {
             double dp = 0.0;
@@ -204,6 +209,166 @@ double      EigenTriangle(Matrix* A, int m)
     return sum / 6;
 }
 
+
+// full reorthogonalization 
+double      EigenTriangle(Matrix* A, int m)
+{
+    time_t startTime = clock();
+    srand(time(0));
+    int n = A -> GetRowNum();
+    double** v = new double*[m];
+    for (int i = 0; i < m; i ++)
+        v[i] = new double[n];
+    double s = 0;
+    // generate the first Lanczos vector randomly
+    for (int i = 0; i < n; i ++)
+    {
+        v[0][i] = Random();
+        s += v[0][i] * v[0][i];
+    }
+    s = sqrt(s);
+    for (int i = 0; i < n; i ++)
+        v[0][i] /= s;
+
+    // alpha and beta are used to construct the tridiagonal matrix T
+    double* w = new double[n];
+    double* alpha = new double[n];
+    double* beta = new double[n + 1];
+    beta[0] = 0;
+    for (int i = 0; i < m; i ++)
+    {
+        /*
+        if (i * 100 / m >= iter + 10)
+        {
+            iter = i * 100 / m;
+            printf("Processing %d%%...\n", iter);
+        }
+        */
+        for (int j = 0; j < n; j ++)
+        {
+            w[j] = 0;
+            for (int k = 0; k < n; k ++)
+                w[j] += A -> Get(j, k) * v[i][k];
+        }
+        /*
+        printf("Lanczos vector: ");
+        for (int j = 0; j < n; j ++)
+            printf("%.5lf ", v[i][j]);
+        printf("\n");
+        */
+        alpha[i] = 0;
+        for (int j = 0; j < n; j ++)
+            alpha[i] += w[j] * v[i][j];
+        if (i == m - 1)
+            break;
+        for (int j = 0; j < n; j ++)
+        {
+            w[j] = w[j] - alpha[i] * v[i][j];
+            if (i > 0)
+                w[j] -= beta[i] * v[i - 1][j];
+        }
+        beta[i + 1] = 0;
+        for (int j = 0; j < n; j ++)
+            beta[i + 1] += w[j] * w[j];
+        beta[i + 1] = sqrt(beta[i + 1]);
+        /*
+        if (fabs(beta[i + 1]) <= 1e-10)
+        {
+            m = i + 1;
+            break;
+        }
+        */
+        if (beta[i + 1] < 0)
+            beta[i + 1] *= -1;
+        for (int j = 0; j < n; j ++)
+        {
+            v[i + 1][j] = w[j] / beta[i + 1];
+        }
+        
+        // reorthogonalization
+        for (int j = 0; j <= i; j ++)
+        {
+            double dp = 0.0;
+            for (int k = 0; k < n; k ++)
+                dp += v[i + 1][k] * v[j][k];
+            for (int k = 0; k < n; k ++)
+                v[i + 1][k] -= dp * v[j][k];
+        }
+    }
+    double* T = new double[m * m];
+    for (int i = 0; i < m; i ++)
+    {
+        for (int j = 0; j < m; j ++)
+            T[i * m + j] = 0;
+        T[i * m + i] = alpha[i];
+        if (i > 0)
+            T[i * m + i - 1] = beta[i];
+        if (i < m - 1)
+            T[i * m + i + 1] = beta[i + 1];
+    }
+    qrAlmostUpperTriangle(T, m);
+    traceMatrix(T, m);
+    /*
+    for (int i = 0; i < m; i ++)
+    {
+        for (int j = 0; j < m; j ++)
+            printf("%.5lf ", T[i * m + j]);
+        printf("\n");
+    }
+    */
+    double* eigens = new double[m];
+    searchEigenValues(T, eigens, m);
+    double sum = 0;
+    //printf("Eigenvalues: \n");
+    for (int i = 0; i < m; i ++)
+    {
+        //printf("%.5lf\n", eigens[i]);
+        sum += pow(eigens[i], 3);
+    }
+    time_t endTime = clock();
+    printf("Time cost for EigenTriangle: %.5lf\n", (endTime - startTime + 0.0) / CLOCKS_PER_SEC);
+
+    delete []w;
+    delete []T;
+    delete []alpha;
+    delete []beta;
+    for (int i = 0; i < m; i ++)
+    {
+        delete []v[i];
+    }
+    delete []v;
+    return sum / 6;
+}
+
+Matrix*     GenerateNetwork(int n)
+{
+    srand(time(0));
+    Matrix* A = new Matrix();
+    A -> Create(n, n);
+    int* edgeCount = new int[n];
+    for (int i = 0; i < n; i ++)
+        edgeCount[i] = 0;
+    int edgeNum = 0;
+    for (int i = 0; i < n; i ++)
+    {
+        for (int j = 0; j < n; j ++)
+        {
+            double v = Random();
+            double p = 1;
+            if (edgeNum > 0)
+                p = (edgeCount[i] + 1.0) / (edgeNum + 1.0);
+            if (v <= p * 2)
+            {
+                A -> Set(i, j, 1);
+                edgeCount[j] ++;
+                edgeNum ++;
+            }
+        }
+    }
+    delete []edgeCount;
+    return A;
+}
+
 Matrix*     GenerateNetwork(int n, double p)
 {
     srand(time(0));
@@ -229,18 +394,19 @@ Matrix*     GenerateNetwork(int n, double p)
 
 int         main()
 {
-    int N = 1000;               // number of nodes
-    double p = 0.7;             // probability of generating a edge
-    double k = 0.01;            // top k*n eigenvalues we care
+    int N = 80;               // number of nodes
+    double p = 0.3;             // probability of generating a edge
+    double k = 1;            // top k*n eigenvalues we care
 
     Matrix* A = new Matrix();   // adjcant matrix
     A = GenerateNetwork(N, p);
+    //A = GenerateNetwork(N);
     A -> Print("matrix.txt");
 
     // brute force method
     printf("==== BruteForce ====\n");
-    int force = ForceTriangle(A);
-    printf("#triangles: %d\n", force);
+    double force = ForceTriangle(A);
+    printf("#triangles: %.0lf\n", force);
     printf("\n");
 
     // EigenTriangle method
